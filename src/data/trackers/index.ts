@@ -21,6 +21,7 @@ export * from "./cinemaz"
 export * from "./concertos"
 export * from "./darkpeers"
 export * from "./digitalcore"
+export * from "./docspedia"
 export * from "./empornium"
 export * from "./exoticaz"
 export * from "./fearnopeer"
@@ -74,6 +75,7 @@ import { cinemaz } from "./cinemaz"
 import { concertos } from "./concertos"
 import { darkpeers } from "./darkpeers"
 import { digitalcore } from "./digitalcore"
+import { docspedia } from "./docspedia"
 import { empornium } from "./empornium"
 import { exoticaz } from "./exoticaz"
 import { fearnopeer } from "./fearnopeer"
@@ -156,6 +158,7 @@ export const ALL_TRACKERS: TrackerRegistryEntry[] = [
   seedpool,
   skipthecommercials,
   sportscult,
+  docspedia,
   torrentleech,
   tvvault,
   uhdbits,

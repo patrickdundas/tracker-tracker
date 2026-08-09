@@ -44,6 +44,7 @@ line — resolve to the new upstream base plus a reset suffix, e.g. `2.9.0-homel
 | Change | Status |
 |---|---|
 | Upstream PR #175 merged whole (Zenith, BTN fix, IPTorrents, TorrentLeech adapters) | done — see below |
+| `checkHnrSustained` — HnR alerts require an increase to hold N polls (2.8.9-homelab.5) | done; **worth upstreaming** |
 | TorrentLeech `hitAndRuns` | **the point of the fork**, not yet implemented |
 | TorrentLeech `requiredRatio` / `warned` | stubbed `null` upstream; `warned` feeds the `warned` notification event |
 
@@ -52,6 +53,27 @@ shared files (`src/lib/adapters/index.ts`, `adapters/constants.ts`, `lib/parser.
 TL alone would leave this fork carrying divergent copies of those, guaranteeing conflicts when
 upstream merges #175. Taken whole, that merge becomes a no-op. The unused adapters never execute
 unless those trackers are configured.
+
+## Hit-and-run alerts are debounced (2.8.9-homelab.5)
+
+Upstream's `checkHnrIncrease` fires the moment the counter rises above the previous poll. That
+assumes the tracker's HnR figure is a permanent strike record. On TorrentLeech it is not — it is a
+**live "not currently satisfying" count**, and stale tracker-side leech records age out through it.
+
+Measured over 11 days of hourly polls on this deployment: four separate `0 -> 1 -> 0` blips, runs of
+5, 4, 2 and 4 polls, every one self-cleared. Four alerts, four false alarms.
+
+`checkHnrSustained` requires the rise to hold for `thresholds.hnrSustainedPolls` consecutive polls
+(default **6** — the smallest value that suppresses all four) and fires exactly once, on the poll
+where the run completes. A real hit-and-run is a recorded penalty that never clears, so the cost is
+only a few hours of notice on something already irreversible.
+
+Two details worth keeping if this is ever rewritten:
+
+- The threshold is **clamped** to `HNR_SUSTAINED_POLLS_MAX`. Unclamped, a value larger than the
+  fetched history could never be satisfied, and "never fires" is indistinguishable from "no HnRs".
+- `pollTracker` now selects `HNR_HISTORY_POLLS` snapshots instead of 1. Only the HnR check reads the
+  extra rows; every other comparison still uses `previousSnapshot`.
 
 ## Workflow edits (the main sync-conflict surface)
 

@@ -75,6 +75,44 @@ Two details worth keeping if this is ever rewritten:
 - `pollTracker` now selects `HNR_HISTORY_POLLS` snapshots instead of 1. Only the HnR check reads the
   extra rows; every other comparison still uses `previousSnapshot`.
 
+## Only credential failures pause a tracker (2.8.9-homelab.7)
+
+Upstream auto-pauses a tracker after `POLL_FAILURE_THRESHOLD` (4) consecutive failures, whatever
+the cause, and a paused tracker only resumes when someone clicks Resume. Two details make that far
+more fragile than it looks:
+
+- A failed poll leaves `lastPolledAt` untouched, so a failing tracker is permanently "overdue" and
+  is retried on **every 5-minute scheduler tick**, not on the hourly poll interval.
+- Four ticks is therefore **20 minutes**. Any outage longer than that pauses the tracker for good.
+
+On 2026-08-16 a home internet outage did exactly that to all six trackers at once. Nothing resumed
+them. The container stayed up the whole time, so the container-level health check stayed green and
+the fault went unnoticed for **33.5 hours** — during which the MyAnonaMouse balance hit its 99,999
+point cap and burned roughly 5,000 points, about 10 GiB of upload credit.
+
+`src/lib/poll-failure-policy.ts` inverts the default. Only a failure a human must actually fix —
+`Authentication failed`, `Session expired`, `Invalid credentials` — can set `pausedAt`. Everything
+else keeps counting failures, so the UI still shows the fault, but is retried forever under
+exponential backoff: 5m, 10m, 20m, 40m, then hourly. Connectivity problems now heal by themselves
+within an hour of the network returning.
+
+Details worth keeping in a rewrite:
+
+- Classification runs on the **output of `sanitizeNetworkError`**, not the raw error, so it matches
+  a small fixed set of phrases rather than guessing at driver-specific text. The unclassified
+  fallback `"Poll failed"` is deliberately transient — that is what the real outage produced, and
+  treating an unknown error as permanent is what caused the incident.
+- Rate-limit and IP-ban errors are transient but jump **straight to the 60-minute cap**, since
+  retrying at the normal cadence is what provokes them.
+- On the transient path `pausedAt` is set to the **column reference** (`paused_at = paused_at`), a
+  no-op self-assign. It must never be a literal, which would clobber a genuine pause.
+- The backoff gate lives in the `pollAllTrackers` overdue filter, keyed off `lastErrorAt`. Without
+  it, removing the pause would mean retrying every 5 minutes forever.
+
+The dashboard side of this incident is fixed separately, in the homelab repo — a heartbeat sender
+that alerts on **snapshot staleness** rather than container liveness, since liveness was never the
+thing worth watching.
+
 ## Workflow edits (the main sync-conflict surface)
 
 `.github/workflows/release.yml` is patched. Upstream's version **cannot publish from a fork** —

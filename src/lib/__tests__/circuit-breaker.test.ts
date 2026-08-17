@@ -361,7 +361,36 @@ describe("pollTracker: failure path — consecutiveFailures increment", () => {
     const arg = (failureSetCall as unknown[])[0] as Record<string, unknown>
     // consecutiveFailures must be an actual Drizzle SQL expression, not a literal number
     expect(arg.consecutiveFailures).toBeInstanceOf(SQL)
-    // pausedAt must also be a Drizzle SQL expression (CASE … END), not a raw value
+    // "Connection refused" is transient, so pausedAt must be left exactly as it
+    // is: a self-assign of the column, never a literal that could clobber it.
+    // A transient failure must never be able to pause a tracker, because that
+    // is how a brief outage blinded all six trackers on 2026-08-16.
+    const { trackers } = await import("@/lib/db/schema")
+    expect(arg.pausedAt).toBe(trackers.pausedAt)
+    expect(arg.pausedAt).not.toBeInstanceOf(SQL)
+  })
+
+  it("uses the CASE expression to pause only on a credential failure", async () => {
+    ;(db.select as ReturnType<typeof vi.fn>).mockReturnValue(
+      mockSelectOnce([makeTrackerRow({ consecutiveFailures: 3 })])
+    )
+    // sanitizeNetworkError is mocked to an identity here, so throw the phrase
+    // it would really produce. A dead session is the one class of failure a
+    // human actually has to fix, so it is allowed to pause the tracker.
+    mockFailureAdapter("Session expired")
+    const updateChain = mockUpdateChain([
+      { consecutiveFailures: POLL_FAILURE_THRESHOLD, pausedAt: new Date() },
+    ])
+
+    await pollTracker(1, MOCK_KEY, false)
+
+    const failureSetCall = updateChain.set.mock.calls.find((call: unknown[]) => {
+      const arg = call[0] as Record<string, unknown>
+      return arg.lastError !== undefined
+    })
+    expect(failureSetCall).toBeDefined()
+    const arg = (failureSetCall as unknown[])[0] as Record<string, unknown>
+    expect(arg.lastError).toBe("Session expired")
     expect(arg.pausedAt).toBeInstanceOf(SQL)
   })
 

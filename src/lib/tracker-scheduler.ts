@@ -31,6 +31,11 @@ import { localDateStr } from "@/lib/formatters"
 import { POLL_INTERVAL_DEFAULT } from "@/lib/limits"
 import { log } from "@/lib/logger"
 import { dispatchNotifications } from "@/lib/notifications/dispatch"
+import {
+  isPermanentPollFailure,
+  isWithinRetryBackoff,
+  pollRetryDelayMs,
+} from "@/lib/poll-failure-policy"
 import { maskUsername } from "@/lib/privacy"
 import { recordDatabaseSize } from "@/lib/server-data"
 import { HNR_HISTORY_POLLS } from "@/lib/tracker-events"
@@ -452,13 +457,20 @@ export async function pollTracker(
 
     try {
       const now = new Date()
+      // Only a failure a human has to fix may stop polling for good. Transient
+      // failures (timeouts, DNS, refused connections, an unclassified "Poll
+      // failed") keep their failure count for visibility and backoff, but never
+      // set pausedAt -- otherwise a brief outage permanently blinds monitoring.
+      const permanent = isPermanentPollFailure(message)
       const [updated] = await db
         .update(trackers)
         .set({
           lastError: message,
           lastErrorAt: now,
           consecutiveFailures: sql`${trackers.consecutiveFailures} + 1`,
-          pausedAt: sql`CASE WHEN ${trackers.consecutiveFailures} + 1 >= ${POLL_FAILURE_THRESHOLD} THEN ${now.toISOString()}::timestamp ELSE ${trackers.pausedAt} END`,
+          pausedAt: permanent
+            ? sql`CASE WHEN ${trackers.consecutiveFailures} + 1 >= ${POLL_FAILURE_THRESHOLD} THEN ${now.toISOString()}::timestamp ELSE ${trackers.pausedAt} END`
+            : trackers.pausedAt,
           updatedAt: now,
         })
         .where(eq(trackers.id, trackerId))
@@ -479,13 +491,16 @@ export async function pollTracker(
           `Tracker ${trackerId} auto-paused after ${updated.consecutiveFailures} consecutive failures`
         )
       } else if (updated) {
+        const retryInMs = pollRetryDelayMs(updated.consecutiveFailures, message)
         log.info(
           {
             trackerId,
             consecutiveFailures: updated.consecutiveFailures,
             threshold: POLL_FAILURE_THRESHOLD,
+            permanent,
+            retryInMinutes: Math.round(retryInMs / 60_000),
           },
-          `Poll failure ${updated.consecutiveFailures}/${POLL_FAILURE_THRESHOLD} for tracker ${trackerId}`
+          `Poll failure ${updated.consecutiveFailures} for tracker ${trackerId}, retrying in ${Math.round(retryInMs / 60_000)}m`
         )
       }
     } catch (dbError) {
@@ -605,6 +620,24 @@ export async function pollAllTrackers(encryptionKey: Buffer): Promise<void> {
           userPausedAt: tracker.userPausedAt?.toISOString() ?? null,
         },
         "skipping paused tracker"
+      )
+      return false
+    }
+    // A failed poll leaves lastPolledAt untouched, so a failing tracker stays
+    // permanently overdue and would otherwise be retried on every 5-minute
+    // tick. Space the retries out instead, so a long outage costs a handful of
+    // attempts per hour rather than twelve.
+    if (isWithinRetryBackoff(tracker, now)) {
+      log.debug(
+        {
+          tracker: tracker.name,
+          consecutiveFailures: tracker.consecutiveFailures,
+          lastError: tracker.lastError,
+          retryInMinutes: Math.round(
+            pollRetryDelayMs(tracker.consecutiveFailures, tracker.lastError) / 60_000
+          ),
+        },
+        "skipping tracker inside retry backoff"
       )
       return false
     }

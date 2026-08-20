@@ -48,6 +48,7 @@ export * from "./redacted"
 export * from "./reelflix"
 export * from "./secretcinema"
 export * from "./seedpool"
+export * from "./simurg"
 export * from "./skipthecommercials"
 export * from "./sportscult"
 export * from "./torrentleech"
@@ -102,6 +103,7 @@ import { redacted } from "./redacted"
 import { reelflix } from "./reelflix"
 import { secretcinema } from "./secretcinema"
 import { seedpool } from "./seedpool"
+import { simurg } from "./simurg"
 import { skipthecommercials } from "./skipthecommercials"
 import { sportscult } from "./sportscult"
 import { torrentleech } from "./torrentleech"
@@ -156,6 +158,7 @@ export const ALL_TRACKERS: TrackerRegistryEntry[] = [
   reelflix,
   secretcinema,
   seedpool,
+  simurg,
   skipthecommercials,
   sportscult,
   docspedia,

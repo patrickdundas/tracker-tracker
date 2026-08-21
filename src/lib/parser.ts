@@ -51,7 +51,23 @@ function multiplyDecimalStringByBigInt(valueStr: string, multiplier: bigint): bi
   return quotient
 }
 
-export function parseBytes(formatted: string): bigint {
+export function parseBytes(formatted: string | number): bigint {
+  // UNIT3D is not consistent about this across deployments. Seed Pool and
+  // DarkPeers return a formatted string ("1.5 TiB"); Blutopia returns a bare
+  // JSON number of raw bytes (uploaded: 53687091200). Before this branch the
+  // adapter crashed on the second shape with "formatted.trim is not a
+  // function", which surfaces to the user as an unhelpful "tracker test
+  // failed" that looks like a bad API key.
+  if (typeof formatted === "number") {
+    if (!Number.isFinite(formatted)) return 0n
+    if (formatted < 0) {
+      throw new Error(`Negative byte values are not allowed: "${formatted}"`)
+    }
+    // Truncate rather than round: a fractional byte count is not meaningful,
+    // and BigInt() throws on a non-integral Number.
+    return BigInt(Math.trunc(formatted))
+  }
+
   const trimmed = formatted.trim()
 
   // Handle infinity/unlimited buffer values from some trackers (e.g. Zenith)
